@@ -97,6 +97,6 @@ describe("pointer targets", () => {
 		expect(rows[lines.findIndex((line) => line.includes("Beta"))]?.target).toEqual({ kind: "option", index: 1 });
 		expect(rows.at(-1)?.target).toEqual({ kind: "option", index: 3 });
 		const [start, end] = view.focusedItemRowRange(width);
-		expect(rows.slice(start, end).every((row) => row?.target.index === 2)).toBe(true);
+		expect(rows.slice(start, end).every((row) => row?.target.kind === "option" && row.target.index === 2)).toBe(true);
 	});
 });

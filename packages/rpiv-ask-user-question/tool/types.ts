@@ -109,6 +109,8 @@ export interface QuestionAnswer {
 	kind: "option" | "custom" | "multi";
 	answer: string | null;
 	selected?: string[];
+	/** Explicitly confirmed custom choice accompanying a multi-select answer; never an unsent draft. */
+	customAnswer?: string;
 	notes?: string;
 	/**
 	 * Markdown text from the matched option's `preview` field, populated only
@@ -146,6 +148,8 @@ export interface QuestionnaireResult {
 	 * byte-identical (`!("globalNote" in result)` holds).
 	 */
 	globalNote?: string;
+	/** General discussion request instead of final answers. Not a cancellation. */
+	response?: string;
 	error?: QuestionnaireError;
 }
 

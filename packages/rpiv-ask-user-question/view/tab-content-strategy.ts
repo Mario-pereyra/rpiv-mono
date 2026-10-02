@@ -1,5 +1,13 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { type Component, Container, type Editor, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	Container,
+	type Editor,
+	Spacer,
+	Text,
+	truncateToWidth,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import { COLLAPSE_KEY_OFF, formatKeySpecForDisplay } from "../config.js";
 import { t } from "../state/i18n-bridge.js";
 import { formatAnswerScalar } from "../tool/format-answer.js";
@@ -21,7 +29,7 @@ import {
 	READY_PROMPT,
 	REVIEW_HEADING,
 } from "./dialog-builder.js";
-import type { PointerRow } from "./pointer-target.js";
+import type { PointerRow, PointerTarget } from "./pointer-target.js";
 import type { StatefulView } from "./stateful-view.js";
 import type { TabComponents } from "./tab-components.js";
 
@@ -43,7 +51,20 @@ class OneLineClippedText implements Component {
 	constructor(
 		private readonly text: string,
 		private readonly paddingLeft: number = 0,
+		private readonly targets: readonly { text: string; target: PointerTarget }[] = [],
 	) {}
+
+	pointerRows(width: number): (PointerRow | undefined)[] {
+		const rows: PointerRow[] = [];
+		for (const { text, target } of this.targets) {
+			const index = this.text.indexOf(text);
+			const start = this.paddingLeft + visibleWidth(this.text.slice(0, index));
+			const end = start + visibleWidth(text);
+			if (index >= 0 && end <= width && this.render(width)[0]?.includes(text)) rows.push({ start, end, target });
+		}
+		const [first, ...additional] = rows;
+		return [first ? { ...first, additional } : undefined];
+	}
 
 	render(width: number): string[] {
 		const pad = " ".repeat(this.paddingLeft);
@@ -139,9 +160,18 @@ export class QuestionTabStrategy implements TabContentStrategy {
 	}
 
 	midRows(state: DialogState): Component[] {
-		if (!state.notesVisible) return [];
+		if (!state.notesVisible && !state.discussionVisible) return [];
 		return [
-			new Text(this.config.theme.fg("muted", t("notes.header", NOTES_HEADER)), 1, 0),
+			new Text(
+				this.config.theme.fg(
+					"muted",
+					state.discussionVisible
+						? t("discussion.header", "Discuss before answering:")
+						: t("notes.header", NOTES_HEADER),
+				),
+				1,
+				0,
+			),
 			this.config.notesInput,
 			new Spacer(1),
 		];
@@ -158,11 +188,19 @@ export class QuestionTabStrategy implements TabContentStrategy {
 			new OneLineClippedText(
 				this.config.theme.fg("dim", buildHintText(question, this.config.isMulti, state, this.config.collapseKey)),
 				1,
+				[
+					{ text: t("hint.notes", HINT_PART_NOTES), target: { kind: "notes" } },
+					{ text: t("hint.discussion", "c to discuss"), target: { kind: "discussion" } },
+				],
 			),
 		];
 	}
 
 	focusedItemRowRange(width: number, state: DialogState): [number, number] | undefined {
+		if (state.notesVisible || state.discussionVisible) {
+			const start = this.bodyComponent(state).render(width).length + 1;
+			return [start, start + 1 + this.config.notesInput.render(width).length];
+		}
 		const question = this.config.questions[state.currentTab];
 		const mso = this.config.tabsByIndex[state.currentTab]?.multiSelect;
 		if (question?.multiSelect === true && mso) return mso.focusedItemRowRange(width);
@@ -231,9 +269,18 @@ export class SubmitTabStrategy implements TabContentStrategy {
 		// editor is open, the shared notesInput mounts below the answer summary under its
 		// own header. The pseudo-index draft (notesByTab[questions.length]) is reducer-owned
 		// state; the strategy only renders.
-		if (!state.notesVisible) return [];
+		if (!state.notesVisible && !state.discussionVisible) return [];
 		return [
-			new Text(this.config.theme.fg("muted", t("notes.global_header", GLOBAL_NOTES_HEADER)), 1, 0),
+			new Text(
+				this.config.theme.fg(
+					"muted",
+					state.discussionVisible
+						? t("discussion.header", "Discuss before answering:")
+						: t("notes.global_header", GLOBAL_NOTES_HEADER),
+				),
+				1,
+				0,
+			),
 			this.config.notesInput,
 			new Spacer(1),
 		];
@@ -267,11 +314,20 @@ export class SubmitTabStrategy implements TabContentStrategy {
 		// with no hint wedged between them. Always present so footerRowCount stays
 		// exactly 5. OneLineClippedText (not pi-tui Text) — a wrapped hint would inflate
 		// the footer past footerRowCount and desync the chrome's cross-tab height math.
-		out.push(new OneLineClippedText(this.config.theme.fg("dim", buildSubmitHintText(state)), 1));
+		out.push(
+			new OneLineClippedText(this.config.theme.fg("dim", buildSubmitHintText(state)), 1, [
+				{ text: t("review.global_hint", REVIEW_GLOBAL_HINT), target: { kind: "notes" } },
+				{ text: t("hint.discussion", "c to discuss"), target: { kind: "discussion" } },
+			]),
+		);
 		return out;
 	}
 
-	focusedItemRowRange(_width: number, _state: DialogState): [number, number] | undefined {
+	focusedItemRowRange(width: number, state: DialogState): [number, number] | undefined {
+		if (state.notesVisible || state.discussionVisible) {
+			const start = this.bodyComponent(state).render(width).length + 1;
+			return [start, start + 1 + this.config.notesInput.render(width).length];
+		}
 		return undefined;
 	}
 }
@@ -297,11 +353,13 @@ export function buildHintText(
 	state: DialogState,
 	collapseKey: string,
 ): string {
+	if (state.discussionVisible) return discussionHintText();
 	const parts: string[] = [t("hint.enter", HINT_PART_ENTER), t("hint.navigate", HINT_PART_NAV)];
 	if (question?.multiSelect === true) parts.push(t("hint.toggle", HINT_PART_TOGGLE));
 	if (question && !state.notesVisible && !state.inputMode) parts.push(t("hint.notes", HINT_PART_NOTES));
 	if (isMulti) parts.push(t("hint.tab", HINT_PART_TAB));
 	parts.push(t("hint.cancel", HINT_PART_CANCEL));
+	if (!state.notesVisible && !state.inputMode) parts.push(t("hint.discussion", "c to discuss"));
 	if (collapseKey !== COLLAPSE_KEY_OFF) {
 		parts.push(
 			t("hint.collapse", HINT_PART_COLLAPSE_TEMPLATE).replace(KEY_PLACEHOLDER, formatKeySpecForDisplay(collapseKey)),
@@ -312,16 +370,21 @@ export function buildHintText(
 	return parts.join(" · ");
 }
 
-/**
- * Submit-tab counterpart of `buildHintText` — the same `·`-joined bottom-row idiom.
- * Resting: Enter · ↑/↓ · `n to add a note` · Esc. While the global-note editor is
- * open the note part drops (the editor is the affordance then) and the Shift+Enter
- * newline hint is appended after cancel, mirroring the question tabs' notes-open shape.
- */
+function discussionHintText(): string {
+	return [
+		t("discussion.submit", "Enter to send message"),
+		t("discussion.back", "Esc to return to questions"),
+		t("hint.newline", HINT_PART_NEW_LINE),
+	].join(" · ");
+}
+
+/** Submit-tab controls share the same discussion/notes precedence as question tabs. */
 export function buildSubmitHintText(state: DialogState): string {
+	if (state.discussionVisible) return discussionHintText();
 	const parts: string[] = [t("hint.enter", HINT_PART_ENTER), t("hint.navigate", HINT_PART_NAV)];
 	if (!state.notesVisible) parts.push(t("review.global_hint", REVIEW_GLOBAL_HINT));
 	parts.push(t("hint.cancel", HINT_PART_CANCEL));
+	if (!state.notesVisible) parts.push(t("hint.discussion", "c to discuss"));
 	if (state.notesVisible) parts.push(t("hint.newline", HINT_PART_NEW_LINE));
 	return parts.join(" · ");
 }

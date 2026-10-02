@@ -17,6 +17,22 @@ export interface AskUserQuestionConfig {
 	 * Pass `"off"` to disable the collapse shortcut entirely.
 	 */
 	collapseKey?: CollapseKeySpec;
+	/** Skip the review tab when a complete single-select batch is confirmed. Default false. */
+	autoSubmit?: boolean;
+	/** Preserve checkbox choices alongside a confirmed custom answer. Default exclusive. */
+	multiSelectCustom?: "exclusive" | "combine";
+}
+
+export interface InteractionOptions {
+	autoSubmit: boolean;
+	multiSelectCustom: "exclusive" | "combine";
+}
+
+export function resolveInteractionOptions(config: AskUserQuestionConfig): InteractionOptions {
+	return {
+		autoSubmit: config.autoSubmit === true,
+		multiSelectCustom: config.multiSelectCustom === "combine" ? "combine" : "exclusive",
+	};
 }
 
 // Named keys accepted by pi-tui's `matchesKey` (keys.js switch on the parsed base key).

@@ -1,5 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { PointerRow } from "../pointer-target.js";
 import type { StatefulView } from "../stateful-view.js";
 
 /**
@@ -29,6 +30,25 @@ export class TabBar implements StatefulView<TabBarProps> {
 	handleInput(_data: string): void {}
 
 	invalidate(): void {}
+
+	pointerRows(width: number): (PointerRow | undefined)[] {
+		let start = visibleWidth(" ← ");
+		const rows: PointerRow[] = [];
+		for (let index = 0; index < this.props.tabs.length; index++) {
+			const tab = this.props.tabs[index]!;
+			const end = start + visibleWidth(` ${tab.answered ? "■" : "□"} ${tab.label} `);
+			if (start < width) rows.push({ start, end: Math.min(width, end), target: { kind: "tab", index } });
+			start = end + 1;
+		}
+		if (start < width)
+			rows.push({
+				start,
+				end: Math.min(width, start + visibleWidth(" ✓ Submit ")),
+				target: { kind: "tab", index: this.props.tabs.length },
+			});
+		const [first, ...additional] = rows;
+		return [first ? { ...first, additional } : undefined, undefined];
+	}
 
 	render(width: number): string[] {
 		const pieces: string[] = [" ← "];

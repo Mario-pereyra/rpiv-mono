@@ -1,5 +1,6 @@
 import type { QuestionAnswer, QuestionData } from "../tool/types.js";
 import type { WrappingSelectItem } from "../view/components/wrapping-select.js";
+import type { ScrollMetrics } from "../view/pointer-target.js";
 
 /**
  * Canonical state for the questionnaire dialog. Single source of truth — both the
@@ -12,6 +13,12 @@ export interface QuestionnaireState {
 	hoveredOptionIndex?: number;
 	inputMode: boolean;
 	notesVisible: boolean;
+	/** General discussion uses the shared notes editor, but never writes question notes. */
+	discussionVisible?: boolean;
+	discussionDraft?: string;
+	/** Undefined follows keyboard focus; an explicit offset is a manually scrolled body window. */
+	bodyScrollOffset?: number;
+	previewScrollOffsets?: ReadonlyMap<number, ReadonlyMap<number, number>>;
 	answers: ReadonlyMap<number, QuestionAnswer>;
 	multiSelectChecked: ReadonlySet<number>;
 	/** In-flight custom answers keyed by tab. A present empty string overrides an older answer. */
@@ -64,4 +71,7 @@ export interface QuestionnaireRuntime {
 	 * the collapse shortcut is disabled.
 	 */
 	collapseKey: string;
+	scrollMetrics?: ScrollMetrics;
+	autoSubmit?: boolean;
+	multiSelectCustom?: "exclusive" | "combine";
 }

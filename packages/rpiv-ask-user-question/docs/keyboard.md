@@ -9,8 +9,11 @@ adapts to the size of your terminal.
 | --- | --- | --- |
 | `↑` / `↓` | Move between rows. Wraps at both ends. | Option list, Submit picker |
 | `Enter` | Confirm the focused option, commit typed text, close notes, or activate the focused Submit-picker row. | Everywhere |
-| `Shift+Enter` | Insert a newline. | `Type something.` input, notes editor |
-| `Esc` | Cancel the whole questionnaire. | Everywhere except the notes editor, where it closes notes |
+| `Shift+Enter` | Insert a newline. | Custom input, notes, discussion |
+| `1`–`5` | Activate the matching numbered row; checkbox rows toggle. | Options and Submit picker, never inside text editors |
+| `c` | Discuss before answering. | Question tabs and Submit tab, outside text editors |
+| `PgUp` / `PgDn` | Page the displayed preview, or the dialog body when there is no scrollable preview. | Outside text editors |
+| `Esc` | Cancel the questionnaire; close notes; or return from discussion to questions. | Context-dependent |
 | `Tab` / `Shift+Tab` | Next / previous tab, wrapping. `→` / `←` do the same. | Multi-question dialogs only |
 | `Space` | Toggle the focused checkbox. | Multi-select questions |
 | `n` | Open the notes editor for the focused question — or, on the Submit tab, the global note for the whole questionnaire. | Every question tab; the Submit tab in multi-question dialogs |
@@ -18,7 +21,8 @@ adapts to the size of your terminal.
 | `Ctrl+U` | Clear the current custom-answer draft. | `Type something.` input |
 | `Ctrl+]` | Collapse or expand the dialog. Configurable via `collapseKey`. | Everywhere, including while collapsed |
 
-The table names the default keys; the dialog actually follows your Pi keybindings.
+Navigation, confirmation, cancellation, and text editing follow your Pi keybindings.
+Numbers, `n`, `c`, and preview paging are local questionnaire shortcuts.
 Confirm listens to both `tui.select.confirm` and `tui.input.submit`, and a key bound to
 `tui.input.newLine` always inserts a newline even if it also matches confirm. So a
 Slack-style configuration — `enter` folded into `tui.input.newLine`, submit moved to
@@ -47,16 +51,22 @@ reports it. Older Pi versions and regular mode keep the keyboard controls above.
 | Left-click `Type something.` | Focus the inline editor; never submit an empty answer |
 | Left-click `Next` / `Submit` | Commit the multi-select question |
 | Left-click `Submit answers` / `Cancel` | Activate that row on the Submit tab |
+| Left-click a visible tab | Switch to that question or to review, without submitting |
+| Left-click the notes hint | Open the question or global note editor |
+| Left-click `c to discuss` | Open the general discussion editor |
+| Wheel over the preview | Scroll that preview without moving focus or answering |
+| Wheel over the dialog body | Scroll long option descriptions or review content |
 
 The preview column, column gap, borders, and overflow arrows are not option targets.
-Tab switching remains keyboard-only. Hover leaves the custom-answer editor alone
-while you type; notes and external-editor input remain keyboard-only. Keyboard input
-clears the hover highlight and keeps its existing confirmation bindings.
+Hover leaves text editors alone while you type. Notes, discussion, and external-editor
+input remain keyboard-driven once open; wheel events are ignored while an editor owns
+focus. Keyboard navigation clears hover and recenters the body on its new focus.
+Preview scrolling keeps the hover highlight and the keyboard focus separate.
 
 The host recognizes clicks on release, so pressing or dragging cannot confirm an
 option. Repeated clicks in the same double-click gesture cannot answer the next
-question accidentally. Mouse-wheel events and modified clicks remain available to
-Pi; the extension does not enable or disable terminal mouse reporting. In terminals
+question accidentally. Wheel events outside a scrollable region and modified pointer
+events remain available to Pi; the extension does not enable or disable terminal mouse reporting. In terminals
 that reserve Shift+drag for native text selection, that escape hatch stays available.
 Multiplexers or terminals that do not report unpressed pointer motion can still
 support clicks without hover.
@@ -75,7 +85,10 @@ arrows move between lines and return to row navigation at the draft's top and bo
 The draft replaces the static row label while you browse other options and is isolated
 per question. `Ctrl+G` round-trips it through Pi's configured external editor; `Ctrl+U`
 clears it, while `Esc` remains the explicit way to cancel the questionnaire. Confirming
-it produces an answer of `kind: "custom"`.
+it produces an answer of `kind: "custom"` by default. With the opt-in
+`multiSelectCustom: "combine"` policy, Enter commits it as `customAnswer` alongside
+checked labels; Next/Submit finishes the question. A checked custom row displays the
+committed choice, not a newer unconfirmed draft; focus it to edit that draft.
 
 Both labels are reserved — the model cannot author an option that collides with them.
 Both localize with the rest of the UI chrome; the reserved-label check always compares
@@ -96,6 +109,19 @@ nothing but a global note still returns an answered result rather than a decline
 
 Inside the editor, `Shift+Enter` inserts a newline, while `Esc` and `Enter` close it; other
 keystrokes edit the buffer, so `n` types an `n`. Pasted line breaks are preserved.
+
+## Discuss before answering
+
+Press `c` or click its footer hint when no text editor is active. Write a general
+message such as “Explain the trade-offs first” rather than an answer to one question.
+Enter sends nonempty text as `response`, with the original questions and any partial
+answers for context; it is not cancellation. Shift+Enter inserts a newline. Escape
+returns to the questions without sending and preserves the discussion draft. This
+editor is separate from question notes and from custom-answer drafts.
+
+By default, multi-question answers still pass through review. `autoSubmit: true` can
+skip it for fully answered single-select batches with no pending custom revisions;
+multi-select and incomplete batches still review. See [configuration.md](./configuration.md).
 
 ## Collapse mode
 
@@ -125,7 +151,11 @@ the dialog pane are at least 100 columns wide. Below that, the preview stacks un
 the options instead.
 
 When the dialog is taller than the terminal, the body scrolls between a sticky heading and
-a sticky footer, and an overflow indicator shows which direction is clipped: `↑` for
+a sticky footer. Wheel over the body to scroll manually; row navigation and tab changes
+restore follow-focus scrolling. Preview offsets are independent per question and option,
+clamp on resize, and survive revisiting an option. A preview window uses at most 20 rows
+side-by-side or 15 stacked; its paging indicator reports the displayed range and total.
+An overflow indicator shows which direction is clipped: `↑` for
 content above, `↓` for content below, `↕` for both.
 
 The footer hint line adapts to context — it drops the notes hint and appends the

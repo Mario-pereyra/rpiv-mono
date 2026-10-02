@@ -8,10 +8,10 @@ import type { ActiveView } from "../../view/stateful-view.js";
  * Priority: notes > submit > options.
  */
 export function selectActiveView(
-	state: { notesVisible: boolean; currentTab: number },
+	state: { notesVisible: boolean; discussionVisible?: boolean; currentTab: number },
 	totalQuestions: number,
 ): ActiveView {
-	if (state.notesVisible) return "notes";
+	if (state.notesVisible || state.discussionVisible) return "notes";
 	if (state.currentTab === totalQuestions) return "submit";
 	return "options";
 }

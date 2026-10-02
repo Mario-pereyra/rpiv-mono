@@ -166,7 +166,7 @@ describe("buildQuestionnaireResponse — completed", () => {
 		const r = buildQuestionnaireResponse(result, params);
 		expect(r.content[0]).toEqual({
 			type: "text",
-			text: 'User has answered your questions: "Pick one"="Option A". You can now continue with the user\'s answers in mind.',
+			text: 'User has answered your questions: "Pick one"="Option A". The user\'s answers and notes are recorded above.',
 		});
 		expect(r.details).toBe(result);
 	});
@@ -383,7 +383,7 @@ describe("buildQuestionnaireResponse — global note", () => {
 		};
 		const r = buildQuestionnaireResponse(result, params);
 		expect(r.content[0].text).toBe(
-			'User has answered your questions: "Pick?"="A". global note: ship it\nFriday. You can now continue with the user\'s answers in mind.',
+			'User has answered your questions: "Pick?"="A". global note: ship it\nFriday. The user\'s answers and notes are recorded above.',
 		);
 		expect(r.details).toBe(result);
 	});
@@ -396,7 +396,7 @@ describe("buildQuestionnaireResponse — global note", () => {
 		};
 		const r = buildQuestionnaireResponse(result, params);
 		expect(r.content[0].text).toMatch(
-			/global note: ship it Friday\. You can now continue with the user's answers in mind\.$/,
+			/global note: ship it Friday\. The user's answers and notes are recorded above\.$/,
 		);
 	});
 
@@ -539,7 +539,7 @@ describe("buildQuestionnaireResponse — multi-question mixed types", () => {
 		};
 		const r = buildQuestionnaireResponse(result, params);
 		expect(r.content[0].text).toBe(
-			'User has answered your questions: "Q2?"="B". You can now continue with the user\'s answers in mind.',
+			'User has answered your questions: "Q2?"="B". The user\'s answers and notes are recorded above.',
 		);
 		expect(r.content[0].text).not.toContain("Q1?");
 	});
@@ -672,7 +672,7 @@ describe("buildQuestionnaireResponse — preview echo + envelope wrapper shape (
 		};
 		const r = buildQuestionnaireResponse(result, params);
 		expect(r.content[0].text).toMatch(/^User has answered your questions:/);
-		expect(r.content[0].text).toMatch(/You can now continue with the user's answers in mind\.$/);
+		expect(r.content[0].text).toMatch(/The user's answers and notes are recorded above\.$/);
 	});
 });
 

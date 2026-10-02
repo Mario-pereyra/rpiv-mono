@@ -9,7 +9,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Numeric row activation outside text editors, plus fullscreen clicks on question/review tabs and notes hints. Keyboard and pointer activation share semantic actions.
+- A `c to discuss` editor that returns a general `response` with question context and partial answers, distinct from cancellation; Escape restores the questionnaire and preserves the discussion draft.
+- Opt-in `autoSubmit: true` for completed single-select batches without pending custom revisions; explicit review remains the default.
+- Opt-in `multiSelectCustom: "combine"` to retain checked labels and a separately confirmed `customAnswer`, including native RPC input via `1,3; custom text`. The exclusive default is unchanged.
+- Region-aware wheel scrolling for dialog bodies and previews, keyboard preview paging, and independent preview offsets per tab/option that clamp on resize.
 - Fullscreen pointer input on Pi 1.0+: hover highlights options and updates previews without moving keyboard focus; left-click confirms a single-select option, toggles a multi-select checkbox, focuses custom text without submitting it, or activates Next/Submit and the Submit-tab picker. Hit targets follow wrapped rows, preview columns, resize, and overflow clipping. Keyboard-only hosts keep their existing controls; mouse reporting and click/drag recognition stay owned by Pi (#138).
+
+### Changed
+
+- Successful response envelopes record answers and notes without instructing the assistant to proceed, so requests to wait or discuss are not contradicted by wrapper text.
 
 ## [2.12.0] - 2026-09-30
 

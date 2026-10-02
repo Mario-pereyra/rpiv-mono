@@ -8,6 +8,7 @@ import type { QuestionnaireState } from "./state.js";
 export interface ApplyContext {
 	questions: readonly QuestionData[];
 	itemsByTab: ReadonlyArray<readonly WrappingSelectItem[]>;
+	multiSelectCustom?: "exclusive" | "combine";
 }
 
 /**
@@ -31,6 +32,7 @@ export type Effect =
 	 * behind the modal.
 	 */
 	| { kind: "set_overlay_hidden"; hidden: boolean }
+	| { kind: "confirm_focused" }
 	| { kind: "done"; result: QuestionnaireResult };
 
 export interface ApplyResult {
@@ -71,7 +73,9 @@ function persistMultiSelectAnswer(state: QuestionnaireState, ctx: ApplyContext):
 		if (state.multiSelectChecked.has(i)) selected.push(q.options[i]!.label);
 	}
 	const out = new Map(state.answers);
-	if (selected.length === 0) {
+	const customAnswer =
+		ctx.multiSelectCustom === "combine" ? state.answers.get(state.currentTab)?.customAnswer : undefined;
+	if (selected.length === 0 && !customAnswer) {
 		out.delete(state.currentTab);
 		return out;
 	}
@@ -82,6 +86,7 @@ function persistMultiSelectAnswer(state: QuestionnaireState, ctx: ApplyContext):
 		kind: "multi",
 		answer: null,
 		selected,
+		...(customAnswer ? { customAnswer } : {}),
 		...(pendingNotes && pendingNotes.length > 0 ? { notes: pendingNotes } : {}),
 	});
 	return out;
@@ -100,7 +105,7 @@ function customDraftValueFor(state: QuestionnaireState, tab: number): string {
 	const draft = state.customDraftsByTab.get(tab);
 	if (draft !== undefined) return draft;
 	const answer = state.answers.get(tab);
-	return answer?.kind === "custom" && typeof answer.answer === "string" ? answer.answer : "";
+	return answer?.kind === "custom" && typeof answer.answer === "string" ? answer.answer : (answer?.customAnswer ?? "");
 }
 
 function setCustomDraft(state: QuestionnaireState, tab: number, value: string): ReadonlyMap<number, string> {
@@ -121,6 +126,7 @@ function switchTabResult(state: QuestionnaireState, nextTab: number, ctx: ApplyC
 	const transitioned: QuestionnaireState = {
 		...state,
 		currentTab: nextTab,
+		bodyScrollOffset: undefined,
 		optionIndex: 0,
 		inputMode: false,
 		notesVisible: false,
@@ -138,7 +144,7 @@ function switchTabResult(state: QuestionnaireState, nextTab: number, ctx: ApplyC
 	};
 }
 
-function doneFor(state: QuestionnaireState, ctx: ApplyContext, cancelled: boolean): ApplyResult {
+function doneFor(state: QuestionnaireState, ctx: ApplyContext, cancelled: boolean, response?: string): ApplyResult {
 	// Global note lift: the Submit-tab note lives at the `questions.length` pseudo-index
 	// in `notesByTab` — question tabs only occupy 0..questions.length-1, so this can never
 	// cross-contaminate a per-question note. Attached regardless of `cancelled` (the
@@ -148,6 +154,7 @@ function doneFor(state: QuestionnaireState, ctx: ApplyContext, cancelled: boolea
 	const result: QuestionnaireResult = {
 		answers: orderedAnswers(state, ctx.questions),
 		cancelled,
+		...(response ? { response } : {}),
 		...(globalNote && globalNote.length > 0 ? { globalNote } : {}),
 	};
 	return { state, effects: [{ kind: "done", result }] };
@@ -170,7 +177,13 @@ const navHandler: Handler<"nav"> = (state, action, ctx) => {
 	const customDraftsByTab = state.inputMode
 		? setCustomDraft(state, state.currentTab, action.inputValue)
 		: state.customDraftsByTab;
-	const next: QuestionnaireState = { ...state, optionIndex: action.nextIndex, inputMode, customDraftsByTab };
+	const next: QuestionnaireState = {
+		...state,
+		bodyScrollOffset: undefined,
+		optionIndex: action.nextIndex,
+		inputMode,
+		customDraftsByTab,
+	};
 	if (!inputMode) return { state: next, effects: [] };
 	return {
 		state: next,
@@ -228,7 +241,7 @@ const toggleHandler: Handler<"toggle"> = (state, action, ctx) => {
 	const checked = new Set(state.multiSelectChecked);
 	if (checked.has(action.index)) checked.delete(action.index);
 	else checked.add(action.index);
-	const intermediate: QuestionnaireState = { ...state, multiSelectChecked: checked };
+	const intermediate: QuestionnaireState = { ...state, multiSelectChecked: checked, bodyScrollOffset: undefined };
 	const answers = persistMultiSelectAnswer(intermediate, ctx);
 	return { state: { ...intermediate, answers }, effects: [] };
 };
@@ -244,6 +257,9 @@ const multiConfirmHandler: Handler<"multi_confirm"> = (state, action, ctx) => {
 		kind: "multi",
 		answer: null,
 		selected: action.selected,
+		...(ctx.multiSelectCustom === "combine" && state.answers.get(state.currentTab)?.customAnswer
+			? { customAnswer: state.answers.get(state.currentTab)!.customAnswer }
+			: {}),
 		...(pendingNotes && pendingNotes.length > 0 ? { notes: pendingNotes } : {}),
 	});
 	const synced: QuestionnaireState = {
@@ -258,7 +274,7 @@ const multiConfirmHandler: Handler<"multi_confirm"> = (state, action, ctx) => {
 const notesEnterHandler: Handler<"notes_enter"> = (state, _action, _ctx) => {
 	const value = notesValueFor(state, state.currentTab);
 	return {
-		state: { ...state, notesVisible: true, notesDraft: value },
+		state: { ...state, notesVisible: true, notesDraft: value, bodyScrollOffset: undefined },
 		effects: [
 			{ kind: "set_notes_value", value },
 			{ kind: "set_notes_focused", focused: true },
@@ -284,7 +300,7 @@ const notesExitHandler: Handler<"notes_exit"> = (state, _action, _ctx) => {
 		if (prev) answers.set(state.currentTab, { ...prev, notes: trimmed });
 	}
 	return {
-		state: { ...state, notesByTab: notes, answers, notesVisible: false },
+		state: { ...state, notesByTab: notes, answers, notesVisible: false, bodyScrollOffset: undefined },
 		effects: [{ kind: "set_notes_focused", focused: false }],
 	};
 };
@@ -292,7 +308,7 @@ const notesExitHandler: Handler<"notes_exit"> = (state, _action, _ctx) => {
 const cancelHandler: Handler<"cancel"> = (s, _a, c) => doneFor(s, c, true);
 const submitHandler: Handler<"submit"> = (s, _a, c) => doneFor(s, c, false);
 const submitNavHandler: Handler<"submit_nav"> = (s, a, _c) => ({
-	state: { ...s, submitChoiceIndex: a.nextIndex },
+	state: { ...s, submitChoiceIndex: a.nextIndex, bodyScrollOffset: undefined },
 	effects: [],
 });
 const notesForwardHandler: Handler<"notes_forward"> = (s, a, _c) => ({
@@ -307,6 +323,77 @@ const hoverHandler: Handler<"hover"> = (state, action, _ctx) => ({
 	state: { ...state, hoveredOptionIndex: action.index },
 	effects: [],
 });
+const activateHandler: Handler<"activate"> = (state, action, ctx) => {
+	const result = navHandler(state, { kind: "nav", nextIndex: action.index, inputValue: action.inputValue }, ctx);
+	return result.state.inputMode ? result : { ...result, effects: [...result.effects, { kind: "confirm_focused" }] };
+};
+
+const discussionEnterHandler: Handler<"discussion_enter"> = (state, action, _ctx) => ({
+	state: {
+		...state,
+		discussionVisible: true,
+		notesVisible: false,
+		bodyScrollOffset: undefined,
+		customDraftsByTab: state.inputMode
+			? setCustomDraft(state, state.currentTab, action.inputValue)
+			: state.customDraftsByTab,
+	},
+	effects: [
+		{ kind: "set_notes_value", value: state.discussionDraft ?? "" },
+		{ kind: "set_notes_focused", focused: true },
+	],
+});
+const discussionExitHandler: Handler<"discussion_exit"> = (state, _action, _ctx) => ({
+	state: { ...state, discussionVisible: false, discussionDraft: state.notesDraft, bodyScrollOffset: undefined },
+	effects: [
+		{ kind: "set_notes_value", value: notesValueFor(state, state.currentTab) },
+		{ kind: "set_notes_focused", focused: false },
+	],
+});
+const discussionConfirmHandler: Handler<"discussion_confirm"> = (state, _action, ctx) => {
+	if (!state.discussionVisible || !state.notesDraft.trim()) return { state, effects: [] };
+	return doneFor(state, ctx, false, state.notesDraft);
+};
+const multiCustomHandler: Handler<"multi_custom"> = (state, action, ctx) => {
+	const q = ctx.questions[state.currentTab];
+	if (!q?.multiSelect || ctx.multiSelectCustom !== "combine") return { state, effects: [] };
+	const answers = new Map(persistMultiSelectAnswer(state, ctx));
+	const previous = answers.get(state.currentTab);
+	const customAnswer = action.value.trim() ? action.value : undefined;
+	const answer: QuestionAnswer = previous ?? {
+		questionIndex: state.currentTab,
+		question: q.question,
+		kind: "multi",
+		answer: null,
+		selected: [],
+	};
+	const base = { ...answer };
+	delete base.customAnswer;
+	const notes = state.notesByTab.get(state.currentTab);
+	answers.set(state.currentTab, { ...base, ...(customAnswer ? { customAnswer } : {}), ...(notes ? { notes } : {}) });
+	return {
+		state: {
+			...state,
+			answers,
+			inputMode: false,
+			bodyScrollOffset: undefined,
+			optionIndex: q.options.length + 1,
+			customDraftsByTab: withoutCustomDraft(state, state.currentTab),
+		},
+		effects: [],
+	};
+};
+const scrollBodyHandler: Handler<"scroll_body"> = (state, action, _ctx) => ({
+	state: { ...state, bodyScrollOffset: action.offset },
+	effects: [],
+});
+const scrollPreviewHandler: Handler<"scroll_preview"> = (state, action, _ctx) => {
+	const tabs = new Map(state.previewScrollOffsets);
+	const options = new Map(tabs.get(state.currentTab));
+	options.set(action.index, action.offset);
+	tabs.set(state.currentTab, options);
+	return { state: { ...state, previewScrollOffsets: tabs }, effects: [] };
+};
 const ignoreHandler: Handler<"ignore"> = (s, _a, _c) => ({ state: s, effects: [] });
 
 /**
@@ -317,6 +404,13 @@ const ignoreHandler: Handler<"ignore"> = (s, _a, _c) => ({ state: s, effects: []
  */
 const HANDLERS: { [K in QuestionnaireAction["kind"]]: Handler<K> } = {
 	nav: navHandler,
+	activate: activateHandler,
+	discussion_enter: discussionEnterHandler,
+	discussion_exit: discussionExitHandler,
+	discussion_confirm: discussionConfirmHandler,
+	multi_custom: multiCustomHandler,
+	scroll_body: scrollBodyHandler,
+	scroll_preview: scrollPreviewHandler,
 	input_clear: inputClearHandler,
 	input_edit: inputEditHandler,
 	input_replace: inputReplaceHandler,
@@ -341,7 +435,12 @@ const HANDLERS: { [K in QuestionnaireAction["kind"]]: Handler<K> } = {
  * `ignore` is also handled outside the reducer by `handleIgnoreInline` in the runtime fast path.
  */
 export function reduce(state: QuestionnaireState, action: QuestionnaireAction, ctx: ApplyContext): ApplyResult {
-	if (action.kind !== "hover" && state.hoveredOptionIndex !== undefined) {
+	if (
+		action.kind !== "hover" &&
+		action.kind !== "scroll_preview" &&
+		action.kind !== "scroll_body" &&
+		state.hoveredOptionIndex !== undefined
+	) {
 		state = { ...state, hoveredOptionIndex: undefined };
 	}
 	const handler = HANDLERS[action.kind] as Handler<typeof action.kind>;

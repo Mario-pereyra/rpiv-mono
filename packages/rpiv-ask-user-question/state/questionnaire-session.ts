@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import type { Editor, OverlayHandle, TUI } from "@earendil-works/pi-tui";
-import { COLLAPSE_KEY_OFF, formatKeySpecForDisplay } from "../config.js";
+import { type Editor, Key, matchesKey, type OverlayHandle, type TUI } from "@earendil-works/pi-tui";
+import { COLLAPSE_KEY_OFF, formatKeySpecForDisplay, type InteractionOptions } from "../config.js";
 import type { QuestionData, QuestionnaireResult, QuestionParams } from "../tool/types.js";
 import type { WrappingSelectItem } from "../view/components/wrapping-select.js";
 import { COLLAPSED_HINT_TEMPLATE, HINT_PART_CANCEL, KEY_PLACEHOLDER } from "../view/dialog-builder.js";
@@ -9,7 +9,6 @@ import { buildQuestionnaire, type QuestionnaireBuilt } from "./build-questionnai
 import { t } from "./i18n-bridge.js";
 import { confirmationAction, type QuestionnaireAction, routeKey } from "./key-router.js";
 import type { QuestionnaireMouseEvent, QuestionnaireMouseResult } from "./mouse-input.js";
-import { ROW_INTENT_META } from "./row-intent.js";
 import type { QuestionnaireRuntime, QuestionnaireState } from "./state.js";
 import { type ApplyContext, type Effect, reduce } from "./state-reducer.js";
 
@@ -32,6 +31,7 @@ export interface QuestionnaireSessionConfig {
 	 * would hide the overlay into a state nothing can reopen.
 	 */
 	canReopenWhileHidden: boolean;
+	interactionOptions?: InteractionOptions;
 }
 
 export interface QuestionnaireSessionComponent {
@@ -77,6 +77,8 @@ export class QuestionnaireSession {
 	private readonly editInput: QuestionnaireSessionConfig["editInput"];
 	private readonly collapseKey: string;
 	private readonly canReopenWhileHidden: boolean;
+	private readonly interactionOptions: InteractionOptions;
+	private readonly built: QuestionnaireBuilt;
 	private inputEditorOpen = false;
 	private finished = false;
 
@@ -101,6 +103,7 @@ export class QuestionnaireSession {
 		this.editInput = config.editInput;
 		this.collapseKey = config.collapseKey;
 		this.canReopenWhileHidden = config.canReopenWhileHidden;
+		this.interactionOptions = config.interactionOptions ?? { autoSubmit: false, multiSelectCustom: "exclusive" };
 
 		const built = buildQuestionnaire({
 			tui: this.tui,
@@ -113,6 +116,7 @@ export class QuestionnaireSession {
 			collapseKey: this.collapseKey,
 		});
 
+		this.built = built;
 		this.notesInput = built.notesInput;
 		this.inlineInput = built.inlineInput;
 		this.viewAdapter = built.adapter;
@@ -156,12 +160,21 @@ export class QuestionnaireSession {
 		event: QuestionnaireMouseEvent,
 		built: QuestionnaireBuilt,
 	): QuestionnaireMouseResult | undefined {
-		if (this.finished || this.inputEditorOpen || this.state.collapsed || this.state.notesVisible) return undefined;
-		if (event.shift || event.alt || event.ctrl || event.type === "wheel") return undefined;
+		if (
+			this.finished ||
+			this.inputEditorOpen ||
+			this.state.collapsed ||
+			this.state.notesVisible ||
+			this.state.discussionVisible
+		)
+			return undefined;
+		if (event.shift || event.alt || event.ctrl) return undefined;
+		if (event.type === "wheel") return this.scrollMouse(event, built);
 		const target = built.pointerTargetAt(event.x, event.y);
 		if (event.type === "move") {
 			// Typing keeps keyboard focus and the full-width editor intact. Hover never enters input mode.
-			if (this.state.inputMode) return undefined;
+			if (this.state.inputMode || built.scrollMetricsAt(event.x, event.y)?.target.kind === "preview")
+				return undefined;
 			const index = target?.kind === "option" ? target.index : undefined;
 			if (this.state.hoveredOptionIndex === index) return target ? { handled: true, render: false } : undefined;
 			this.commit({ kind: "hover", index });
@@ -172,22 +185,51 @@ export class QuestionnaireSession {
 		// synthesizes click only after a stationary press/release; drags never confirm.
 		if (event.type === "press") return { handled: true, render: false };
 		if (event.type !== "click" || (event.clickCount ?? 1) > 1) return undefined;
-		if (target.kind === "submit") {
-			this.commit({ kind: "submit_nav", nextIndex: target.index });
-		} else {
-			this.commit({ kind: "nav", nextIndex: target.index, inputValue: this.runtime().inputBuffer });
-			const item = this.currentItem();
-			// Clicking the free-text sentinel only focuses it, never submits an empty answer.
-			if (item && ROW_INTENT_META[item.kind].activatesInputMode) return { handled: true };
+		switch (target.kind) {
+			case "tab":
+				if (this.state.inputMode) this.commit({ kind: "input_replace", value: this.runtime().inputBuffer });
+				this.commit({ kind: "tab_switch", nextTab: target.index });
+				break;
+			case "notes":
+				this.commit({ kind: "notes_enter" });
+				break;
+			case "discussion":
+				this.commit({ kind: "discussion_enter", inputValue: this.runtime().inputBuffer });
+				break;
+			case "option":
+				this.commit({ kind: "activate", index: target.index, inputValue: this.runtime().inputBuffer });
+				break;
+			case "submit":
+				this.commit({ kind: "submit_nav", nextIndex: target.index });
+				this.commit(confirmationAction(this.state, this.runtime()));
+				break;
 		}
-		this.commit(confirmationAction(this.state, this.runtime()));
+		return { handled: true };
+	}
+
+	private scrollMouse(
+		event: QuestionnaireMouseEvent,
+		built: QuestionnaireBuilt,
+	): QuestionnaireMouseResult | undefined {
+		const delta = event.wheelDelta;
+		if (this.state.inputMode || typeof delta !== "number" || !Number.isFinite(delta) || delta === 0) return undefined;
+		const metrics = built.scrollMetricsAt(event.x, event.y);
+		if (!metrics || metrics.maxOffset === 0) return undefined;
+		const step = Math.sign(delta) * Math.max(1, Math.round(Math.abs(delta)));
+		const offset = Math.max(0, Math.min(metrics.offset + step, metrics.maxOffset));
+		if (offset === metrics.offset) return { handled: true, render: false };
+		this.commit(
+			metrics.target.kind === "preview"
+				? { kind: "scroll_preview", index: metrics.target.index, offset }
+				: { kind: "scroll_body", offset },
+		);
 		return { handled: true };
 	}
 
 	dispatch(data: string): void {
 		if (this.finished || this.inputEditorOpen) return;
 		if (this.state.hoveredOptionIndex !== undefined) this.commit({ kind: "hover", index: undefined });
-		const action = routeKey(data, this.state, this.runtime());
+		const action = routeKey(data, this.state, this.runtime(data));
 		if (action.kind === "ignore") {
 			this.handleIgnoreInline(data);
 			return;
@@ -238,6 +280,9 @@ export class QuestionnaireSession {
 				// visible one-line collapsed row serves as the fallback rendering instead.
 				if (this.canReopenWhileHidden) this.overlayHandle?.setHidden(effect.hidden);
 				return;
+			case "confirm_focused":
+				this.commit(confirmationAction(this.state, this.runtime()));
+				return;
 			case "done":
 				this.finished = true;
 				this.done(effect.result);
@@ -273,7 +318,14 @@ export class QuestionnaireSession {
 		this.viewAdapter.apply(this.state);
 	}
 
-	private runtime(): QuestionnaireRuntime {
+	private runtime(data?: string): QuestionnaireRuntime {
+		const paging =
+			data !== undefined &&
+			(matchesKey(data, Key.pageDown) || matchesKey(data, Key.pageUp)) &&
+			!this.state.inputMode &&
+			!this.state.notesVisible &&
+			!this.state.discussionVisible;
+		const preview = paging ? this.built.previewScrollMetrics() : undefined;
 		const cursor = this.inlineInput.getCursor();
 		const lastLine = this.inlineInput.getLines().length - 1;
 		return {
@@ -286,6 +338,8 @@ export class QuestionnaireSession {
 			currentItem: this.currentItem(),
 			items: this.itemsByTab[this.state.currentTab] ?? [],
 			collapseKey: this.collapseKey,
+			...this.interactionOptions,
+			scrollMetrics: paging ? (preview?.maxOffset ? preview : this.built.bodyScrollMetrics()) : undefined,
 		};
 	}
 
@@ -293,6 +347,7 @@ export class QuestionnaireSession {
 		return {
 			questions: this.questions,
 			itemsByTab: this.itemsByTab,
+			multiSelectCustom: this.interactionOptions.multiSelectCustom,
 		};
 	}
 

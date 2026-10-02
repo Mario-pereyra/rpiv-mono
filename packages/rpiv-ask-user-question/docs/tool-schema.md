@@ -79,10 +79,12 @@ code. The `content[0].text` string is written for the model, not for a log.
       kind: "option" | "custom" | "multi",
       answer: string | null,       // option label, typed text, or null for multi
       selected?: string[],         // chosen labels, multi-select only
+      customAnswer?: string,       // confirmed text alongside labels, combine policy only
       notes?: string,              // free-text note, when you wrote one
       preview?: string,            // echoed back when the chosen option carried a preview
     }>,
     cancelled: boolean,
+    response?: string,            // general discussion message, not a question answer
     globalNote?: string,          // Submit-tab note; present even when cancelled is true
     error?: QuestionnaireError,    // one of the codes above
   }
@@ -92,13 +94,30 @@ code. The `content[0].text` string is written for the model, not for a log.
 ### Envelope text
 
 On success the text reads `User has answered your questions: "<question>"="<answer>". …
-You can now continue with the user's answers in mind.` A chosen option's `preview` is
+The user's answers and notes are recorded above.` A chosen option's `preview` is
 appended as `selected preview: <markdown>`, a per-question note as `user notes: <text>`,
 and the Submit tab's global note as a trailing `global note: <text>` segment. A global
 note alone still yields the answered envelope — it counts as an answer even when every
 question is blank.
 
-Cancelling, and any result with neither answer segments nor a global note, both collapse
+The suffix records the response without instructing the model to proceed; a custom
+answer or note may explicitly ask the assistant to wait or explain something first.
+
+With `multiSelectCustom: "combine"`, `selected` contains authored labels only and
+`customAnswer` contains the separately confirmed text. Custom-only answers still have
+`kind: "multi"`, `answer: null`, and `selected: []`. Renderers should include both parts;
+the envelope joins them in the answer segment. The default exclusive policy continues
+to return `kind: "custom"` for typed multi-select answers.
+
+When the user chooses `c to discuss`, `response` carries their general message and
+`cancelled` is false. The envelope says they want to discuss before answering, includes
+the original questions/options, and identifies any existing answers as partial, not a
+final submission. This closes the tool call so the assistant can respond; it is not a
+background conversation with a suspended questionnaire. The assistant can ask again
+after addressing the message. Escape within that editor returns to the still-open
+questionnaire and preserves the draft instead. RPC does not expose this editor.
+
+Cancelling, and any result with neither answer segments nor a global note nor a discussion response, both collapse
 to the single string `User declined to answer questions` so the model sees one canonical
 signal. Partial submission is allowed: unanswered questions simply contribute no segment.
 A cancelled result always reads as the decline in text; its note, if any, survives only

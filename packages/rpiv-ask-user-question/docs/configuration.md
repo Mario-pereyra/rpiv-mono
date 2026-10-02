@@ -18,6 +18,8 @@ A complete example:
 ```json
 {
   "collapseKey": "alt+o",
+  "autoSubmit": false,
+  "multiSelectCustom": "exclusive",
   "guidance": {
     "description": "Ask the user structured questions whenever requirements are ambiguous.",
     "promptSnippet": "Ask me before guessing on anything ambiguous",
@@ -59,6 +61,8 @@ type are likewise dropped back to their default without a warning.
 | Setting | What it does | Default |
 | --- | --- | --- |
 | `collapseKey` | Key that collapses and expands the dialog overlay. | `"ctrl+]"` |
+| `autoSubmit` | Submit a fully answered single-select batch without visiting the review tab. | `false` |
+| `multiSelectCustom` | `"exclusive"` replaces checkboxes with custom text; `"combine"` permits both. | `"exclusive"` |
 | `guidance.description` | Full text of the tool description the model sees. Replaces the built-in default entirely — no merging. | built-in description |
 | `guidance.promptSnippet` | One-line snippet describing the tool in the system prompt. | built-in snippet |
 | `guidance.promptGuidelines` | List of usage guidelines given to the model. | 4 built-in guidelines |
@@ -89,6 +93,29 @@ The footer hint inside the dialog names whatever key you configure (`Alt+O to co
 for `"alt+o"`), as do the collapsed one-line footer and the one-shot notification shown
 when the dialog is first hidden. With `"off"` the collapse hint is dropped from the
 footer entirely, since no shortcut can fire.
+
+### `autoSubmit`
+
+Only the boolean `true` opts in. A multi-question dialog skips review when confirming
+its last single-select question if every question is answered, all questions are
+single-select, and no other tab has an unconfirmed custom draft. Skipped questions,
+multi-select questions, or pending revisions keep the review step. A single question
+already submits immediately, as before. Notes that were written are included either
+way. This option applies to the terminal questionnaire; RPC dialogs have no review tab.
+
+### `multiSelectCustom`
+
+`"exclusive"` preserves the original contract: confirming custom text replaces the
+checkbox answer and clears the selected boxes. `"combine"` keeps boxes checked and
+lets Enter commit a custom choice without leaving the question. The custom row shows
+a checked box after committing. Use Next/Submit to finish the question; clear the text
+with Ctrl+U and confirm again to remove only the custom choice. Unconfirmed drafts
+remain editable but are never silently included in the result. The additive
+`customAnswer` field carries confirmed text on a `kind: "multi"` answer.
+
+RPC hosts use `1,3; custom text` to combine choices and text. Without a valid numeric
+prefix, the entire input remains custom text. Invalid configuration values fall back
+to `"exclusive"`. Interaction settings are read for each new questionnaire.
 
 ### `guidance.description`, `guidance.promptSnippet` and `guidance.promptGuidelines`
 

@@ -87,12 +87,18 @@ function buildPreviewBlock(question: QuestionData): string {
  * `QuestionAnswer` is produced per question otherwise, so the envelope is
  * identical to the TUI path's.
  */
-export async function runRpcQuestionnaire(ui: DialogUI, params: QuestionParams): Promise<QuestionnaireResult> {
+export async function runRpcQuestionnaire(
+	ui: DialogUI,
+	params: QuestionParams,
+	multiSelectCustom: "exclusive" | "combine" = "exclusive",
+): Promise<QuestionnaireResult> {
 	const answers: QuestionAnswer[] = [];
 	for (let qi = 0; qi < params.questions.length; qi++) {
 		const q = params.questions[qi];
 		const header = q.header ? `[${q.header}] ` : "";
-		const answer = q.multiSelect ? await askMultiSelect(ui, q, qi, header) : await askSingleSelect(ui, q, qi, header);
+		const answer = q.multiSelect
+			? await askMultiSelect(ui, q, qi, header, multiSelectCustom)
+			: await askSingleSelect(ui, q, qi, header);
 		if (answer === undefined) return { answers, cancelled: true };
 		answers.push(answer);
 	}
@@ -136,10 +142,11 @@ async function askMultiSelect(
 	q: QuestionData,
 	questionIndex: number,
 	header: string,
+	multiSelectCustom: "exclusive" | "combine",
 ): Promise<QuestionAnswer | undefined> {
 	const list = q.options.map(formatOptionLine).join("\n");
 	const value = await ui.input(
-		`${header}${q.question}\n\n${list}\n\n${t("rpc.multi_instructions", MULTI_SELECT_INSTRUCTIONS)}`,
+		`${header}${q.question}\n\n${list}\n\n${t("rpc.multi_instructions", MULTI_SELECT_INSTRUCTIONS)}${multiSelectCustom === "combine" ? "\nCombine choices and custom text with a semicolon, e.g. 1,3; another choice" : ""}`,
 		MULTI_SELECT_PLACEHOLDER,
 	);
 	if (value == null) return undefined;
@@ -147,6 +154,27 @@ async function askMultiSelect(
 	if (trimmed.length === 0) {
 		// Deliberate empty commit — same as pressing "Next" with nothing toggled.
 		return { questionIndex, question: q.question, kind: "multi", answer: null, selected: [] };
+	}
+	if (multiSelectCustom === "combine" && trimmed.includes(";")) {
+		const separator = trimmed.indexOf(";");
+		const prefix = trimmed
+			.slice(0, separator)
+			.trim()
+			.split(/[,\s]+/)
+			.filter(Boolean);
+		const indices = prefix.map((token) => (/^\d+\.?$/.test(token) ? parseIndex(token, q.options.length) : null));
+		if (indices.length > 0 && indices.every((i): i is number => i !== null)) {
+			const selected = [...new Set(indices.map((i) => q.options[i]!.label))];
+			const customAnswer = trimmed.slice(separator + 1).trim();
+			return {
+				questionIndex,
+				question: q.question,
+				kind: "multi",
+				answer: null,
+				selected,
+				...(customAnswer ? { customAnswer } : {}),
+			};
+		}
 	}
 	const tokens = trimmed.split(/[,\s]+/).filter((tok) => tok.length > 0);
 	const indices = tokens.map((tok) => (/^\d+\.?$/.test(tok) ? parseIndex(tok, q.options.length) : null));
@@ -162,5 +190,7 @@ async function askMultiSelect(
 	// options) means the user typed an answer, not a selection. Preserve it
 	// verbatim as a custom answer instead of silently dropping their input —
 	// this is also the multi-select "Type something." escape.
-	return { questionIndex, question: q.question, kind: "custom", answer: trimmed };
+	return multiSelectCustom === "combine"
+		? { questionIndex, question: q.question, kind: "multi", answer: null, selected: [], customAnswer: trimmed }
+		: { questionIndex, question: q.question, kind: "custom", answer: trimmed };
 }

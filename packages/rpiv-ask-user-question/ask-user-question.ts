@@ -3,8 +3,10 @@ import { isKeyRelease, isKeyRepeat, matchesKey, type OverlayHandle, type TUI } f
 import {
 	COLLAPSE_KEY_OFF,
 	formatKeySpecForDisplay,
+	type InteractionOptions,
 	loadConfig,
 	resolveCollapseKey,
+	resolveInteractionOptions,
 	validateGuidanceFields,
 } from "./config.js";
 import {
@@ -64,7 +66,10 @@ async function runRpcPath(pi: ExtensionAPI, ui: DialogUI, typed: QuestionParams)
 	emitAskUserBlockedEvent(pi, true);
 	try {
 		emitTerminalAttention();
-		return buildQuestionnaireResponse(await runRpcQuestionnaire(ui, typed), typed);
+		return buildQuestionnaireResponse(
+			await runRpcQuestionnaire(ui, typed, resolveInteractionOptions(loadConfig()).multiSelectCustom),
+			typed,
+		);
 	} finally {
 		emitAskUserBlockedEvent(pi, false);
 	}
@@ -192,6 +197,7 @@ function makeSessionFactory(config: {
 	canReopenWhileHidden: boolean;
 	sessionRef: SessionRef;
 	Session: SessionModule["QuestionnaireSession"];
+	interactionOptions: InteractionOptions;
 }) {
 	const { ctx, typed, itemsByTab, collapseKey, canReopenWhileHidden, sessionRef, Session } = config;
 	return (
@@ -226,6 +232,7 @@ function makeSessionFactory(config: {
 			},
 			collapseKey,
 			canReopenWhileHidden,
+			interactionOptions: config.interactionOptions,
 		});
 		sessionRef.current = session;
 		return session.component;
@@ -240,7 +247,10 @@ function makeSessionFactory(config: {
  */
 async function resolveUndefinedResult(ctx: ExtensionContext, typed: QuestionParams) {
 	if (hasDialogUI(ctx.ui)) {
-		return buildQuestionnaireResponse(await runRpcQuestionnaire(ctx.ui, typed), typed);
+		return buildQuestionnaireResponse(
+			await runRpcQuestionnaire(ctx.ui, typed, resolveInteractionOptions(loadConfig()).multiSelectCustom),
+			typed,
+		);
 	}
 	return buildToolResult(ERROR_NO_CUSTOM_UI, { answers: [], cancelled: true, error: "no_custom_ui" });
 }
@@ -352,7 +362,9 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
 			// with non-US layouts (e.g. Latin American, where `]` is shifted) can override
 			// via the `collapseKey` config field. `resolveCollapseKey` also accepts the
 			// sentinel value `"off"` to disable the shortcut entirely.
-			const collapseKey = resolveCollapseKey(loadConfig());
+			const config = loadConfig();
+			const collapseKey = resolveCollapseKey(config);
+			const interactionOptions = resolveInteractionOptions(config);
 
 			// Capture the overlay handle so the session can call `setHidden()` when the
 			// user toggles collapse, and register a raw terminal input listener for the
@@ -378,6 +390,7 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
 						canReopenWhileHidden,
 						sessionRef,
 						Session: QuestionnaireSession,
+						interactionOptions,
 					}),
 					{
 						overlay: true,

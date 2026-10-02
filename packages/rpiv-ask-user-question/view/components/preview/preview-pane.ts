@@ -1,9 +1,10 @@
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { t } from "../../../state/i18n-bridge.js";
 import type { QuestionData } from "../../../tool/types.js";
-import type { PointerRow } from "../../pointer-target.js";
+import type { PointerRow, PreviewScrollRegion } from "../../pointer-target.js";
 import type { StatefulView } from "../../stateful-view.js";
 import type { OptionListView } from "../option-list-view.js";
-import type { PreviewBlockRenderer } from "./preview-block-renderer.js";
+import { NOTES_AFFORDANCE_TEXT, type PreviewBlockRenderer } from "./preview-block-renderer.js";
 import {
 	bodyWidths,
 	columnWidths,
@@ -47,6 +48,7 @@ export {
  */
 export interface PreviewPaneProps {
 	notesVisible: boolean;
+	scrollOffset?: number;
 	selectedIndex: number;
 	focused: boolean;
 	/**
@@ -142,6 +144,7 @@ export class PreviewPane implements StatefulView<PreviewPaneProps>, Component {
 				mode,
 				this.props.focused,
 				this.props.notesVisible,
+				this.props.scrollOffset,
 			),
 		];
 	}
@@ -154,7 +157,44 @@ export class PreviewPane implements StatefulView<PreviewPaneProps>, Component {
 		const mode = decideLayout(this.getTerminalWidth(), width);
 		const optionsWidth = mode === "side-by-side" ? columnWidths(width, this.getAdaptiveLeft(width)).leftWidth : width;
 		const rows = this.optionListView.pointerRows(optionsWidth);
-		return [...rows, ...Array<undefined>(Math.max(0, this.render(width).length - rows.length)).fill(undefined)];
+		const rendered = this.render(width);
+		const mapped = [...rows, ...Array<undefined>(Math.max(0, rendered.length - rows.length)).fill(undefined)];
+		const label = t("preview.notes_affordance", NOTES_AFFORDANCE_TEXT);
+		for (let i = 0; i < rendered.length; i++) {
+			const line = rendered[i]!;
+			const index = line.indexOf(label);
+			if (index < 0) continue;
+			const start = visibleWidth(line.slice(0, index));
+			const note: PointerRow = {
+				start,
+				end: Math.min(width, start + visibleWidth(label)),
+				target: { kind: "notes" },
+			};
+			const option = mapped[i];
+			mapped[i] = option ? { ...option, additional: [...(option.additional ?? []), note] } : note;
+		}
+		return mapped;
+	}
+
+	scrollRegion(width: number): PreviewScrollRegion | undefined {
+		if (this.question.multiSelect || this.props.inputMode || !this.previewBlock.has(this.props.selectedIndex))
+			return undefined;
+		const mode = decideLayout(this.getTerminalWidth(), width);
+		const { optionsWidth, previewWidth } = bodyWidths(width, mode, this.getAdaptiveLeft(width));
+		const metrics = this.previewBlock.scrollMetrics(
+			previewWidth,
+			this.props.selectedIndex,
+			mode,
+			this.props.scrollOffset,
+		);
+		const top = mode === "stacked" ? this.optionListView.render(optionsWidth).length + STACKED_GAP_ROWS : 0;
+		return {
+			...metrics,
+			left: mode === "stacked" ? 0 : optionsWidth + columnWidths(width, this.getAdaptiveLeft(width)).gap,
+			right: width,
+			top,
+			bottom: top + this.previewBlock.blockHeight(previewWidth, this.props.selectedIndex, mode) - 2,
+		};
 	}
 
 	focusedItemRowRange(width: number): [number, number] {
@@ -231,6 +271,7 @@ export class PreviewPane implements StatefulView<PreviewPaneProps>, Component {
 			mode,
 			this.props.focused,
 			this.props.notesVisible,
+			this.props.scrollOffset,
 		);
 		const boxWidth = Math.max(1, visibleWidth(contentLines[0] ?? ""));
 		const boxAlignedPad = Math.max(PREVIEW_PADDING_LEFT, colWidth - boxWidth);

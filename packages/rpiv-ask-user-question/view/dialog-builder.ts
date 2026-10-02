@@ -5,7 +5,7 @@ import type { QuestionnaireState } from "../state/state.js";
 import type { QuestionData } from "../tool/types.js";
 import type { PreviewPaneProps } from "./components/preview/preview-pane.js";
 import type { TabBar } from "./components/tab-bar.js";
-import { type PointerRow, type PointerTarget, pointerTargetAt } from "./pointer-target.js";
+import { type PointerRow, type PointerTarget, pointerTargetAt, type ScrollMetrics } from "./pointer-target.js";
 import type { StatefulView } from "./stateful-view.js";
 import type { TabComponents } from "./tab-components.js";
 import { QuestionTabStrategy, SubmitTabStrategy, type TabContentStrategy } from "./tab-content-strategy.js";
@@ -147,6 +147,11 @@ export interface DialogConfig {
 export class DialogView implements StatefulView<DialogProps> {
 	private liveProps: DialogProps;
 	private lastPointerRows: (PointerRow | undefined)[] = [];
+	private lastWidth = 0;
+	private lastBodyStart = 0;
+	private lastMiddleRange: [number, number] = [0, 0];
+	private lastNaturalIndices: (number | undefined)[] = [];
+	private lastBodyMetrics: ScrollMetrics = { offset: 0, maxOffset: 0, pageSize: 1, target: { kind: "body" } };
 	private readonly config: DialogConfig;
 	private readonly questionStrategy: TabContentStrategy;
 	private readonly submitStrategy: TabContentStrategy | undefined;
@@ -186,12 +191,47 @@ export class DialogView implements StatefulView<DialogProps> {
 		return pointerTargetAt(this.lastPointerRows, x, y);
 	}
 
+	previewScrollMetrics(): ScrollMetrics | undefined {
+		if (this.lastWidth <= 0 || this.liveProps.state.currentTab === this.config.questions.length) return undefined;
+		const pane = this.liveProps.activePreviewPane as StatefulView<PreviewPaneProps> & {
+			scrollRegion?: (width: number) => ScrollMetrics | undefined;
+		};
+		return pane.scrollRegion?.(this.lastWidth);
+	}
+
+	bodyScrollMetrics(): ScrollMetrics {
+		return this.lastBodyMetrics;
+	}
+
+	scrollMetricsAt(x: number, y: number): ScrollMetrics | undefined {
+		if (x < 0 || x >= this.lastWidth || y < 0) return undefined;
+		const pane = this.liveProps.activePreviewPane as StatefulView<PreviewPaneProps> & {
+			scrollRegion?: (width: number) => import("./pointer-target.js").PreviewScrollRegion | undefined;
+		};
+		const region =
+			this.liveProps.state.currentTab === this.config.questions.length
+				? undefined
+				: pane.scrollRegion?.(this.lastWidth);
+		const naturalRow = this.lastNaturalIndices[y];
+		if (
+			region &&
+			naturalRow !== undefined &&
+			x >= region.left &&
+			x < region.right &&
+			naturalRow >= this.lastBodyStart + region.top &&
+			naturalRow < this.lastBodyStart + region.bottom
+		)
+			return region;
+		return y >= this.lastMiddleRange[0] && y < this.lastMiddleRange[1] ? this.lastBodyMetrics : undefined;
+	}
+
 	// Invalidation is driven by `QuestionnairePropsAdapter.invalidate()`, which
 	// owns the full set of renderables (binding registries + extras like
 	// `notesInput`). DialogView has no cached layout of its own.
 	invalidate(): void {}
 
 	render(width: number): string[] {
+		this.lastWidth = width;
 		const state = this.liveProps.state;
 		const onSubmit = this.config.isMulti && state.currentTab === this.config.questions.length;
 		const strategy = onSubmit && this.submitStrategy ? this.submitStrategy : this.questionStrategy;
@@ -209,6 +249,8 @@ export class DialogView implements StatefulView<DialogProps> {
 		const bottomFixed = 1 + strategy.footerRowCount;
 		const middleRows = natural.length - topFixed - bottomFixed;
 		const pointerRows = this.buildPointerRows(strategy, headingCount, topFixed, width);
+		this.lastBodyStart = topFixed + headingCount;
+		this.lastBodyMetrics = { offset: 0, maxOffset: 0, pageSize: 1, target: { kind: "body" } };
 
 		// Residual spacer: equalizes total height across tabs (only needed when no overflow).
 		const spacerRows = Math.max(
@@ -222,6 +264,8 @@ export class DialogView implements StatefulView<DialogProps> {
 		const termRows = this.config.getTerminalRows();
 
 		if (natural.length + spacerRows <= termRows) {
+			this.lastNaturalIndices = Array.from({ length: natural.length }, (_v, i) => i);
+			this.lastMiddleRange = [this.lastBodyStart, natural.length - bottomFixed];
 			this.lastPointerRows = [...pointerRows, ...Array<undefined>(spacerRows).fill(undefined)];
 			return renderFitsTerminal(natural, spacerRows);
 		}
@@ -229,6 +273,11 @@ export class DialogView implements StatefulView<DialogProps> {
 		// OVERFLOW — apply 3-region partition with scroll-to-focus.
 		const availableMiddle = Math.max(0, termRows - topFixed - bottomFixed);
 		if (availableMiddle === 0) {
+			this.lastMiddleRange = [0, 0];
+			this.lastNaturalIndices = [
+				...Array.from({ length: topFixed }, (_v, i) => i),
+				...Array.from({ length: bottomFixed }, (_v, i) => natural.length - bottomFixed + i),
+			].slice(0, termRows);
 			this.lastPointerRows = [...pointerRows.slice(0, topFixed), ...pointerRows.slice(-bottomFixed)].slice(
 				0,
 				termRows,
@@ -236,12 +285,29 @@ export class DialogView implements StatefulView<DialogProps> {
 			return renderChromeOnly(natural, topFixed, bottomFixed, termRows);
 		}
 
-		const scrollStart = computeScrollStart(
+		const automaticScrollStart = computeScrollStart(
 			strategy.focusedItemRowRange(width, state),
 			headingCount,
 			availableMiddle,
 			middleRows,
 		);
+		const maxOffset = Math.max(0, middleRows - availableMiddle);
+		const scrollStart = Math.max(0, Math.min(Math.floor(state.bodyScrollOffset ?? automaticScrollStart), maxOffset));
+		this.lastMiddleRange = [topFixed, topFixed + availableMiddle];
+		this.lastBodyMetrics = {
+			offset: scrollStart,
+			maxOffset,
+			pageSize: Math.max(1, availableMiddle - 2),
+			target: { kind: "body" },
+		};
+		this.lastNaturalIndices = [
+			...Array.from({ length: topFixed }, (_v, i) => i),
+			...Array.from({ length: availableMiddle }, (_v, i) => topFixed + scrollStart + i),
+			...Array.from({ length: bottomFixed }, (_v, i) => natural.length - bottomFixed + i),
+		];
+		if (scrollStart > 0) this.lastNaturalIndices[topFixed] = undefined;
+		if (scrollStart + availableMiddle < middleRows)
+			this.lastNaturalIndices[topFixed + availableMiddle - 1] = undefined;
 		const scrollableMiddle = natural.slice(topFixed + scrollStart, topFixed + scrollStart + availableMiddle);
 		decorateOverflow(
 			scrollableMiddle,
@@ -281,6 +347,10 @@ export class DialogView implements StatefulView<DialogProps> {
 		const bodyHeight = strategy.bodyComponent(state).render(width).length;
 		const bodyRows = strategy.bodyPointerRows?.(width, state) ?? [];
 		const rows: (PointerRow | undefined)[] = Array<undefined>(topFixed + headingCount).fill(undefined);
+		if (this.config.isMulti && this.config.tabBar) {
+			const tabs = this.config.tabBar.pointerRows?.(width) ?? [];
+			rows[1] = tabs[0];
+		}
 		rows.push(...Array.from({ length: bodyHeight }, (_, i) => bodyRows[i]));
 		const midHeight = strategy.midRows(state).reduce((n, component) => n + component.render(width).length, 0);
 		rows.push(...Array<undefined>(1 + midHeight + 1).fill(undefined));
@@ -291,7 +361,12 @@ export class DialogView implements StatefulView<DialogProps> {
 					{ start: 0, end: width, target: { kind: "submit", index: 0 } },
 					{ start: 0, end: width, target: { kind: "submit", index: 1 } },
 				);
-			} else rows.push(...Array<undefined>(height).fill(undefined));
+			} else {
+				const mapped = (
+					component as Component & { pointerRows?: (width: number) => (PointerRow | undefined)[] }
+				).pointerRows?.(width);
+				rows.push(...Array.from({ length: height }, (_v, i) => mapped?.[i]));
+			}
 		}
 		return rows;
 	}

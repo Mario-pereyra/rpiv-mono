@@ -1,7 +1,9 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { MarkdownTheme } from "@earendil-works/pi-tui";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { t } from "../../../state/i18n-bridge.js";
 import type { QuestionData } from "../../../tool/types.js";
+import type { ScrollMetrics } from "../../pointer-target.js";
 import {
 	MAX_PREVIEW_HEIGHT_SIDE_BY_SIDE,
 	MAX_PREVIEW_HEIGHT_STACKED,
@@ -71,6 +73,18 @@ export class PreviewBlockRenderer {
 		this.cache.invalidate();
 	}
 
+	scrollMetrics(width: number, optionIndex: number, mode: PreviewLayoutMode, offset = 0): ScrollMetrics {
+		const pageSize = contentBudgetFor(mode);
+		const count = this.cache.bodyFor(optionIndex, innerWidthFor(width)).length;
+		const maxOffset = Math.max(0, count - pageSize);
+		return {
+			offset: Math.max(0, Math.min(Math.floor(offset), maxOffset)),
+			maxOffset,
+			pageSize,
+			target: { kind: "preview", index: optionIndex },
+		};
+	}
+
 	/**
 	 * Height contribution of the preview block: `BORDER_VERTICAL_OVERHEAD + contentRows +
 	 * NOTES_AFFORDANCE_OVERHEAD`. Always returns the same value as `renderBlock(...).length`
@@ -96,6 +110,7 @@ export class PreviewBlockRenderer {
 		mode: PreviewLayoutMode,
 		focused: boolean,
 		notesVisible: boolean,
+		scrollOffset = 0,
 	): string[] {
 		const contentBudget = contentBudgetFor(mode);
 		const maxInnerWidth = innerWidthFor(width);
@@ -103,7 +118,8 @@ export class PreviewBlockRenderer {
 		const raw = this.cache.bodyFor(optionIndex, maxInnerWidth);
 		const truncated = raw.length > contentBudget;
 		const hidden = truncated ? raw.length - contentBudget : 0;
-		const contentLines = truncated ? raw.slice(0, contentBudget) : raw;
+		const { offset } = this.scrollMetrics(width, optionIndex, mode, scrollOffset);
+		const contentLines = truncated ? raw.slice(offset, offset + contentBudget) : raw;
 
 		const { boxWidth } = computeBoxDimensions(contentLines, maxInnerWidth);
 		const colorFn = (s: string) => this.theme.fg("accent", s);
@@ -113,6 +129,16 @@ export class PreviewBlockRenderer {
 		const affordance = showAffordance
 			? this.theme.fg("muted", t("preview.notes_affordance", NOTES_AFFORDANCE_TEXT))
 			: "";
-		return [...boxedLines, "", affordance];
+		const scrollHint = truncated
+			? this.theme.fg(
+					"dim",
+					truncateToWidth(
+						`PgUp/PgDn · ${offset + 1}–${Math.min(raw.length, offset + contentBudget)} / ${raw.length}`,
+						width,
+						"…",
+					),
+				)
+			: "";
+		return [...boxedLines, scrollHint, affordance];
 	}
 }

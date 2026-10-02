@@ -3,7 +3,7 @@ import type { QuestionAnswer, QuestionnaireResult, QuestionParams } from "./type
 
 export const DECLINE_MESSAGE = "User declined to answer questions";
 export const ENVELOPE_PREFIX = "User has answered your questions:";
-export const ENVELOPE_SUFFIX = "You can now continue with the user's answers in mind.";
+export const ENVELOPE_SUFFIX = "The user's answers and notes are recorded above.";
 
 /**
  * Map a `QuestionnaireResult` (or null/cancelled) to the LLM-facing tool envelope.
@@ -14,6 +14,18 @@ export const ENVELOPE_SUFFIX = "You can now continue with the user's answers in 
  * still yields the answered envelope.
  */
 export function buildQuestionnaireResponse(result: QuestionnaireResult | null | undefined, params: QuestionParams) {
+	if (result && !result.cancelled && result.response) {
+		const context = params.questions
+			.map(
+				(q, i) => `${i + 1}. ${q.question}\n${q.options.map((o) => `   ${o.label}: ${o.description}`).join("\n")}`,
+			)
+			.join("\n");
+		const prior = result.answers.map(buildAnswerSegment).join(" ");
+		return buildToolResult(
+			`The user responded instead of completing the questionnaire: ${result.response}\nQuestion context:\n${context}${prior ? `\nPreviously recorded answers (not a final submission): ${prior}` : ""}`,
+			result,
+		);
+	}
 	if (!result || result.cancelled) {
 		// Decline text stays canonical even when a global note rides the cancelled result;
 		// the note survives in `details` (like partial `answers`) for replay consumers.

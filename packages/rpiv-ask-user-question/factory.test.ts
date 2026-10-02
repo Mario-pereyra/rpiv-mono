@@ -749,7 +749,7 @@ describe("ask_user_question — MAX_QUESTIONS (4 questions) complete flow", () =
 		expect(r?.content[0].text).toContain('"Q1?"="A".');
 		expect(r?.content[0].text).toContain('"Q4?"="D".');
 		expect(r?.content[0].text).toMatch(/^User has answered your questions:/);
-		expect(r?.content[0].text).toMatch(/You can now continue with the user's answers in mind\.$/);
+		expect(r?.content[0].text).toMatch(/The user's answers and notes are recorded above\.$/);
 	});
 
 	it("cancel after answering 2 of 4 → partial answers preserved", async () => {

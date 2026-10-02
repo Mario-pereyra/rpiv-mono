@@ -17,7 +17,7 @@ import { SubmitPicker } from "../view/components/submit-picker.js";
 import { TabBar } from "../view/components/tab-bar.js";
 import type { WrappingSelectItem, WrappingSelectTheme } from "../view/components/wrapping-select.js";
 import { DialogView } from "../view/dialog-builder.js";
-import type { PointerTarget } from "../view/pointer-target.js";
+import type { PointerTarget, ScrollMetrics } from "../view/pointer-target.js";
 import { QuestionnairePropsAdapter } from "../view/props-adapter.js";
 import type { StatefulView } from "../view/stateful-view.js";
 import type { TabBodyHeights, TabComponents } from "../view/tab-components.js";
@@ -56,6 +56,9 @@ export interface QuestionnaireBuilt {
 	inlineInput: Editor;
 	render: (width: number) => string[];
 	pointerTargetAt: (x: number, y: number) => PointerTarget | undefined;
+	scrollMetricsAt: (x: number, y: number) => ScrollMetrics | undefined;
+	previewScrollMetrics: () => ScrollMetrics | undefined;
+	bodyScrollMetrics: () => ScrollMetrics;
 	invalidate: () => void;
 }
 
@@ -330,6 +333,9 @@ class QuestionnaireBuilder {
 			inlineInput: this.inlineInput,
 			render: (w) => dialog.render(w),
 			pointerTargetAt: (x, y) => dialog.pointerTargetAt(x, y),
+			scrollMetricsAt: (x, y) => dialog.scrollMetricsAt(x, y),
+			previewScrollMetrics: () => dialog.previewScrollMetrics(),
+			bodyScrollMetrics: () => dialog.bodyScrollMetrics(),
 			invalidate: () => adapter.invalidate(),
 		};
 	}

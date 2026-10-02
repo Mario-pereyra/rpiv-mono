@@ -50,6 +50,10 @@ TUI produces. Trade-offs inherent to the native primitives:
   (`1,3`). Any token that is not a valid option index is treated as a typed custom answer,
   which is how the `Type something.` escape survives. An empty input commits an empty
   selection, matching `Next` with nothing toggled.
+- With opt-in `multiSelectCustom: "combine"`, use `1,3; custom text` to retain both
+  labels and a separately confirmed custom choice. Free text alone becomes a multi
+  answer with empty `selected` and populated `customAnswer`; the exclusive default is
+  unchanged. The terminal discussion editor is not exposed by these primitives.
 - Dismissing any dialog cancels the whole questionnaire, mirroring `Esc` in the TUI.
 
 If the host can render neither custom UI nor dialogs, the call returns
@@ -67,6 +71,8 @@ Some parts of the dialog exist only under the right conditions:
 | `Type something.` row | Always |
 | Side-by-side preview | An option carries a `preview`, and terminal and pane are both ≥ 100 columns |
 | Preview pane at all | Single-select questions only |
+| General discussion editor | `c` or its footer hint is activated in terminal UI |
+| Pointer controls and region wheel scrolling | Pi 1.0+ fullscreen and terminal mouse reporting |
 | Collapse shortcut | `collapseKey` is not `"off"` |
 | Full overlay hide on collapse | The host also exposes raw terminal input (the only path that can reopen a hidden overlay); without it, collapsing shrinks the dialog to a visible one-line row instead |
 | Localized chrome | `@juicesharp/rpiv-i18n` is installed |

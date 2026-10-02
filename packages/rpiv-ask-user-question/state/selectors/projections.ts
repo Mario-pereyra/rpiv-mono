@@ -42,13 +42,16 @@ export const selectMultiSelectProps: PerTabSelector<MultiSelectViewProps> = (sta
 	}
 	const otherActive = focused && state.optionIndex === question.options.length;
 	const nextActive = focused && state.optionIndex === question.options.length + 1;
+	const answer = state.answers.get(ctx.i);
+	const custom = answer?.kind === "multi" ? answer.customAnswer : undefined;
 	return {
 		rows,
 		...(focused && state.hoveredOptionIndex !== undefined ? { hoveredIndex: state.hoveredOptionIndex } : {}),
 		other: {
 			active: otherActive,
 			inputMode: state.inputMode,
-			inputBuffer: ctx.inputBuffer,
+			...(custom && !state.inputMode ? { confirmed: true } : {}),
+			inputBuffer: !state.inputMode && custom ? custom : ctx.inputBuffer,
 			inputCursorOffset: ctx.inputCursorOffset,
 		},
 		nextActive,
@@ -85,6 +88,14 @@ export const selectPreviewPaneProps: PerTabSelector<PreviewPaneProps> = (state, 
 	selectedIndex: state.hoveredOptionIndex ?? state.optionIndex,
 	focused: ctx.activeView === "options",
 	inputMode: state.inputMode,
+	...(state.previewScrollOffsets?.get(state.currentTab)?.get(state.hoveredOptionIndex ?? state.optionIndex) !==
+	undefined
+		? {
+				scrollOffset: state.previewScrollOffsets
+					?.get(state.currentTab)
+					?.get(state.hoveredOptionIndex ?? state.optionIndex),
+			}
+		: {}),
 });
 
 export const selectTabBarProps: GlobalSelector<TabBarProps> = (state, ctx) => {

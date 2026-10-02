@@ -37,6 +37,7 @@ export type Effect =
     | { kind: "set_notes_value"; value: string }  | { kind: "set_notes_focused"; focused: boolean }
     | { kind: "forward_notes_keystroke"; data: string }
     | { kind: "set_overlay_hidden"; hidden: boolean }  // toggle_collapsed → OverlayHandle.setHidden
+    | { kind: "confirm_focused" }  // semantic activation shared by numbers and clicks
     | { kind: "done"; result: QuestionnaireResult };
 ```
 
@@ -51,7 +52,8 @@ type Handler<K extends QuestionnaireAction["kind"]> =
 const HANDLERS: { [K in QuestionnaireAction["kind"]]: Handler<K> } = {
     nav, input_clear, input_edit, input_replace, tab_switch, confirm, toggle, multi_confirm,
     cancel, notes_enter, notes_exit, notes_forward, submit, submit_nav, toggle_collapsed,
-    ignore,   // each maps to its `<kind>Handler`
+    activate, discussion_enter, discussion_exit, discussion_confirm, multi_custom,
+    scroll_body, scroll_preview, hover, ignore,   // each maps to its `<kind>Handler`
 };
 ```
 
@@ -73,11 +75,11 @@ export const ROW_INTENT_META: Record<RowKind, RowIntentMeta> = {
 - **HANDLERS is the dispatch surface** — adding a `QuestionnaireAction.kind` fails at compile time until a handler exists
 - **Effects are a closed union** — adding one requires extending both the type AND `runEffect`
 - **`ROW_INTENT_META` is exhaustive over `RowKind`** — single source of truth for per-kind behavior; banned-flags test enforces no boolean drift
-- **`QuestionnaireState` is canonical** — `customDraftsByTab` owns captured per-question free-text drafts; runtime context (keybindings, live input buffer, item list, `collapseKey`) lives in `QuestionnaireRuntime` and NEVER reaches view setProps consumers
+- **`QuestionnaireState` is canonical** — `customDraftsByTab` owns captured per-question free-text drafts; runtime context (keybindings, live input buffer, item list, `collapseKey`, interaction policy, and measured scroll bounds) lives in `QuestionnaireRuntime` and NEVER reaches view setProps consumers. Body/preview offsets are canonical; preview offsets are nested immutable maps keyed by tab and option, while geometry remains render-derived
 - **Side-band drafts** — `notesByTab` and `customDraftsByTab` keep unconfirmed data out of `answers`; confirm merges notes and removes the custom draft so the answer becomes authoritative
-- **Two dispatch entries, one reducer** — `dispatch(data)` from overlay `handleInput`, plus `toggleCollapsedExternal()` from the raw `ctx.ui.onTerminalInput` listener in `../ask-user-question.ts` (pi-tui delivers no input to a hidden overlay); both funnel through `commit` → `reduce`, so collapse hides the overlay only via the `set_overlay_hidden` effect — and the session honours that effect only when `canReopenWhileHidden` (the raw listener was registered); otherwise the visible one-line collapsed row is the fallback. Both entries are exclusive while the external editor is open
-- **No chat escape hatch** — the `chat` row kind, `chatFocused`, and `focus_chat`/`focus_options` were removed; Esc is the only way to abandon without answering
-- **Multi-select free text is exclusive** — a `custom` answer on a multi-select tab clears `multiSelectChecked` (`confirmHandler`); Space/Enter never toggles the `activatesInputMode` row, and Enter on regular rows toggles — commit is gated on `autoSubmitsInMulti` (the Next row)
+- **Pointer, keyboard, and raw reopen entries share one reducer** — `handleMouse` resolves render-derived targets and emits semantic actions; `dispatch(data)` from overlay `handleInput`, plus `toggleCollapsedExternal()` from the raw `ctx.ui.onTerminalInput` listener in `../ask-user-question.ts` (pi-tui delivers no input to a hidden overlay); both funnel through `commit` → `reduce`, so collapse hides the overlay only via the `set_overlay_hidden` effect — and the session honours that effect only when `canReopenWhileHidden` (the raw listener was registered); otherwise the visible one-line collapsed row is the fallback. Both entries are exclusive while the external editor is open
+- **Discussion is a separate mode** — `c`/the footer hint enter an editor backed by the shared notes Editor, with its draft stored separately as `discussionDraft`. Escape restores the questions; confirmation returns a non-cancelled `QuestionnaireResult.response` plus partial answers. The `chat` row kind and legacy focus flags stay removed. Discussion text never enters `notesByTab` or a question answer
+- **Multi-select policy is explicit** — default `"exclusive"` custom answers clear `multiSelectChecked`; opt-in `"combine"` commits `customAnswer` on a multi answer while preserving boxes. Live custom drafts remain outside answers. Space/Enter never toggles the `activatesInputMode` row; Enter on regular rows toggles, and Next commits the question
 - **`i18n-bridge.ts` is the ONLY rpiv-i18n consumer** — keep reducer/router/selectors English-pure
 
 <important if="you are adding a new QuestionnaireAction kind">

@@ -20,6 +20,13 @@ const SPACE_KEY = " ";
 export type QuestionnaireAction =
 	| { kind: "nav"; nextIndex: number; inputValue: string }
 	| { kind: "hover"; index: number | undefined }
+	| { kind: "activate"; index: number; inputValue: string }
+	| { kind: "discussion_enter"; inputValue: string }
+	| { kind: "discussion_exit" }
+	| { kind: "discussion_confirm" }
+	| { kind: "multi_custom"; value: string }
+	| { kind: "scroll_body"; offset: number }
+	| { kind: "scroll_preview"; index: number; offset: number }
 	| { kind: "input_clear" }
 	| { kind: "input_edit"; value: string }
 	| { kind: "input_replace"; value: string }
@@ -71,6 +78,17 @@ function totalTabs(runtime: QuestionnaireRuntime): number {
 function computeAutoAdvanceTab(state: QuestionnaireState, runtime: QuestionnaireRuntime): number | undefined {
 	if (!runtime.isMulti) return undefined;
 	if (state.currentTab < runtime.questions.length - 1) return state.currentTab + 1;
+	if (
+		runtime.autoSubmit &&
+		runtime.questions.every((q) => !q.multiSelect) &&
+		runtime.questions.every((_q, i) => i === state.currentTab || state.answers.has(i)) &&
+		[...state.customDraftsByTab].every(([i, draft]) => {
+			if (i === state.currentTab) return true;
+			const answer = state.answers.get(i);
+			return draft === (answer?.kind === "custom" ? (answer.answer ?? "") : "");
+		})
+	)
+		return undefined;
 	return runtime.questions.length;
 }
 
@@ -203,6 +221,8 @@ function routeSubmitTab(
 		return { kind: "submit_nav", nextIndex: (next === 1 ? 1 : 0) as 0 | 1 };
 	}
 	if (isConfirm(kb, data)) return confirmationAction(state, runtime);
+	if (data === "1") return { kind: "submit" };
+	if (data === "2") return { kind: "cancel" };
 	// Global note (#182): `n` on the Submit tab opens the notes editor scoped to the whole
 	// questionnaire at the pseudo-index (`questions.length` in notesByTab). Reachable only
 	// with the editor closed — `routeKey` dispatches notesVisible traffic to
@@ -251,6 +271,9 @@ function routeSingleSelectTab(
 /** Semantic confirmation shared by keyboard and pointer input; independent of physical keybindings. */
 export function confirmationAction(state: QuestionnaireState, runtime: QuestionnaireRuntime): QuestionnaireAction {
 	if (state.collapsed || state.notesVisible) return { kind: "ignore" };
+	if (state.inputMode && runtime.questions[state.currentTab]?.multiSelect && runtime.multiSelectCustom === "combine") {
+		return { kind: "multi_custom", value: runtime.inputBuffer };
+	}
 	if (runtime.isMulti && state.currentTab === runtime.questions.length) {
 		// Partial submission is intentional; the warning is informational only.
 		return state.submitChoiceIndex === 1 ? { kind: "cancel" } : { kind: "submit" };
@@ -307,12 +330,29 @@ export function routeKey(data: string, state: QuestionnaireState, runtime: Quest
 	}
 
 	if (state.collapsed) return routeCollapsed(kb, data);
+	if (state.discussionVisible) {
+		if (kb.matches(data, KEYBIND_CANCEL)) return { kind: "discussion_exit" };
+		if (kb.matches(data, KEYBIND_NEW_LINE)) return { kind: "notes_forward", data };
+		if (isConfirm(kb, data)) return { kind: "discussion_confirm" };
+		return { kind: "notes_forward", data };
+	}
 	if (state.notesVisible) return routeNotesMode(kb, data);
 	if (state.inputMode) return routeInputMode(kb, data, state, runtime);
+	if (data === "c" && !isConfirm(kb, data) && !kb.matches(data, KEYBIND_CANCEL)) {
+		return { kind: "discussion_enter", inputValue: runtime.inputBuffer };
+	}
 	if (runtime.isMulti && state.currentTab === runtime.questions.length) {
 		return routeSubmitTab(kb, data, state, runtime);
 	}
 
+	const metrics = runtime.scrollMetrics;
+	if (metrics && metrics.maxOffset > 0 && (matchesKey(data, Key.pageDown) || matchesKey(data, Key.pageUp))) {
+		const delta = matchesKey(data, Key.pageDown) ? metrics.pageSize : -metrics.pageSize;
+		const offset = Math.max(0, Math.min(metrics.offset + delta, metrics.maxOffset));
+		return metrics.target.kind === "preview"
+			? { kind: "scroll_preview", index: metrics.target.index, offset }
+			: { kind: "scroll_body", offset };
+	}
 	const tab = tabSwitchAction(data, state, runtime);
 	if (tab) return tab;
 
@@ -340,6 +380,17 @@ export function routeKey(data: string, state: QuestionnaireState, runtime: Quest
 		return nextNavOnDown(state, runtime);
 	}
 
+	if (!isConfirm(kb, data) && !kb.matches(data, KEYBIND_CANCEL)) {
+		let number = 0;
+		for (let index = 0; index < runtime.items.length; index++) {
+			const item = runtime.items[index];
+			if (!item || !ROW_INTENT_META[item.kind].numbered) continue;
+			number++;
+			if (matchesKey(data, String(number) as Parameters<typeof matchesKey>[1])) {
+				return { kind: "activate", index, inputValue: runtime.inputBuffer };
+			}
+		}
+	}
 	if (q.multiSelect) return routeMultiSelectTab(kb, data, state, runtime);
 	return routeSingleSelectTab(kb, data, state, runtime);
 }

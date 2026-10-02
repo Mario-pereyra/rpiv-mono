@@ -12,6 +12,8 @@ export interface QuestionnaireMouseEvent {
 	alt: boolean;
 	ctrl: boolean;
 	clickCount?: number;
+	/** Logical lines; negative scrolls up. Supplied by Pi's fullscreen renderer. */
+	wheelDelta?: number;
 }
 
 export interface QuestionnaireMouseResult {
